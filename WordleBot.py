@@ -1,7 +1,6 @@
 
 import time
 import sys
-from attr import has
 
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -169,7 +168,6 @@ def startGame(driver):
     wordContains = []
     wordDoesNotContain = []
 
-    # Lets go
     enterWord(driver, firstGuess)
 
     for turn in range(0, 5):
@@ -239,17 +237,29 @@ def testGame(firstGuess, answer, answersCopy):
 
 if __name__ == '__main__':
 
-    testing = True
+    testing = False
 
-    if testing:
+    if not testing:
+
+        driver = webdriver.Firefox()
+        driver.get('https://www.powerlanguage.co.uk/wordle/')
+
+        time.sleep(3)
+
+        # Hide the popup when opening the site
+        driver.find_element(By.TAG_NAME, 'html').click()
+        
+        time.sleep(1)
+
+        startGame(driver)
+
+    else:
 
         answers = []
         with open("answers.txt") as f:
             for line in f:
                 answers.append(line.strip())
 
-        #testGame('farts', 'boxer', answers)
-        #exit()
         fails = open('fails.txt', 'w')
 
         # Why, python?
@@ -261,6 +271,7 @@ if __name__ == '__main__':
         total = 0
         for ans in answers:
             
+            # 'train'- 99.05%, 'irate'- 99.18%, 'roast'- 99.22%, 'farts'- 99.44%
             results = testGame('farts', ans, answers)
 
             if results > 0:
@@ -277,20 +288,3 @@ if __name__ == '__main__':
         print("Average guess distribution: {}".format(totalResults))
 
         fails.close()
-
-    else:
-
-        driver = webdriver.Firefox()
-        driver.get('https://www.powerlanguage.co.uk/wordle/')
-
-        time.sleep(3)
-
-        # Hide the popup when opening the site
-        driver.find_element(By.TAG_NAME, 'html').click()
-        
-        time.sleep(1)
-
-        startGame(driver)
-
-        time.sleep(10)
-        driver.close()
