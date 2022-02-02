@@ -1,6 +1,7 @@
 
 import time
 import sys
+from attr import has
 
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -18,16 +19,19 @@ def getRowEvaluation(driver, gameRow, knownWord, wordContains, wordDoesNotContai
     # Get the tiles in the row from the site
     row = driver.execute_script('return arguments[0].shadowRoot.children', gameRow)[1]
     tiles = row.find_elements(By.TAG_NAME, 'game-tile')
+    evals = []
 
     for i in range(0, 5):
 
-        eval = tiles[i].get_attribute('evaluation')
         letter = tiles[i].get_attribute('letter')
+        eval = tiles[i].get_attribute('evaluation')
+        evals.append(eval)
 
         if eval == 'correct':
             knownWord[i] = letter
-        elif eval == 'present' and letter not in wordContains:
-            wordContains.append(letter)
+        elif eval == 'present':
+            if letter not in wordContains:
+                wordContains.append(letter)
         elif letter not in wordDoesNotContain:
             wordDoesNotContain.append(letter)
 
@@ -37,36 +41,41 @@ def getRowEvaluation(driver, gameRow, knownWord, wordContains, wordDoesNotContai
         if char in knownWord or char in wordContains:
             wordDoesNotContain.remove(char)
 
-    return knownWord, wordContains, wordDoesNotContain
+    return evals, knownWord, wordContains, wordDoesNotContain
 
 # Simulate checking a guess in the wordle
 def getTestEvaluation(answer, guess, knownWord, wordContains, wordDoesNotContain):
 
+    eval = []
     for i in range(0, 5):
 
         if guess[i] in answer:
             if guess[i] == answer[i]:
+                eval.append('correct')
                 knownWord[i] = guess[i]
-            elif guess[i] not in wordContains:
-                wordContains.append(guess[i])
-        elif guess[i] not in wordDoesNotContain:
-            wordDoesNotContain.append(guess[i])        
+            else:
+                eval.append('present')
+
+                if guess[i] not in wordContains:
+                    wordContains.append(guess[i])
+        else:
+            eval.append('absent')
+
+            if guess[i] not in wordDoesNotContain:
+                wordDoesNotContain.append(guess[i])  
     
-    return knownWord, wordContains, wordDoesNotContain
+    return eval, knownWord, wordContains, wordDoesNotContain
   
-def trimAnswers(answers, knownWord, lastGuess, wordContains, wordDoesNotContain):
+def trimAnswers(answers, knownWord, guesses, wordContains, wordDoesNotContain):
 
     newAnswersList = []
 
     for word in answers:
 
-        # If our last guess has all the right letters but differently arranged
-        # ex. 'cloud' and 'could'. Program would keep guessing cloud
-        # Don't add it to the possible guesses
-        if word == lastGuess:
-            continue
-        
         hasWrongLetters = False
+
+        if hasWrongLetters:
+            continue
 
         # Check if there are any letters we know are wrong
         for char in wordDoesNotContain:
@@ -74,24 +83,46 @@ def trimAnswers(answers, knownWord, lastGuess, wordContains, wordDoesNotContain)
                 hasWrongLetters = True
                 break
 
+        if hasWrongLetters:
+            continue
+        
+        # Is word missing correct letters?
         for char in wordContains:
             if char not in word:
                 hasWrongLetters = True
                 break
  
+        if hasWrongLetters:
+            continue
+
         # Check if the word has any known letters in the right spot
-        if not hasWrongLetters:
-            for i in range(0, 5):
-                if knownWord[i] != '_' and knownWord[i] != word[i]:
+        for i in range(0, 5):
+            if knownWord[i] != '_' and knownWord[i] != word[i]:
+                hasWrongLetters = True
+    
+        if hasWrongLetters:
+            continue
+
+        for i in range(0, len(guesses)):
+
+            # Check if word was guessed last
+            if word == ''.join(guesses[i][0]):
+                hasWrongLetters = True
+                break
+
+            # Check past evaluations to see if the word has correct letters but in the wrong spot
+            for j in range(0, 5):
+                if word[j] == guesses[i][0][j] and guesses[i][1][j] == 'present':
                     hasWrongLetters = True
-        
-        if not hasWrongLetters :#and hasRightLetters:
+                    break
+
+        if not hasWrongLetters:
             newAnswersList.append(word)
 
     return newAnswersList
 
 # Choose our next guess by the amount it will reduce possible answers
-def chooseGuess(answers, knownWord, lastGuess, wordContains, wordDoesNotContain):
+def chooseGuess(answers, knownWord, wordContains, wordDoesNotContain):
 
     bestGuess = ''
     leastAnswersLeft = sys.maxsize
@@ -105,7 +136,7 @@ def chooseGuess(answers, knownWord, lastGuess, wordContains, wordDoesNotContain)
             if char not in knownWord and char not in wordContains:
                 notContainsCopy.append(char)
 
-        newAnswers = trimAnswers(answers, knownWord, lastGuess, wordContains, notContainsCopy)
+        newAnswers = trimAnswers(answers, knownWord, '', wordContains, notContainsCopy)
         newAnswersLen = len(newAnswers)
 
         if newAnswersLen < leastAnswersLeft:
@@ -127,7 +158,10 @@ def startGame(driver):
             answers.append(line.strip())
 
     firstGuess = 'farts'
-    lastGuess = firstGuess
+
+    # Store the past guesses in a list along with their evaluations
+    # Will use the evaluations when trimming answers
+    guesses = [[list(firstGuess), ]]
 
     # Used to store the letters we know are in the correct spot
     knownWord = list('_____')
@@ -140,7 +174,8 @@ def startGame(driver):
 
     for turn in range(0, 5):
 
-        knownWord, wordContains, wordDoesNotContain = getRowEvaluation(driver, gameRows[turn], knownWord, wordContains, wordDoesNotContain)
+        eval, knownWord, wordContains, wordDoesNotContain = getRowEvaluation(driver, gameRows[turn], knownWord, wordContains, wordDoesNotContain)
+        guesses[turn].insert(1, eval)
 
         # Wordle solved
         if '_' not in knownWord:
@@ -148,15 +183,13 @@ def startGame(driver):
             return
 
         # Go through the known answers list and remove any wrong ones
-        answers = trimAnswers(answers, knownWord, lastGuess, wordContains, wordDoesNotContain)
+        answers = trimAnswers(answers, knownWord, guesses, wordContains, wordDoesNotContain)
 
-        guess = chooseGuess(answers, knownWord, lastGuess, wordContains, wordDoesNotContain)
-        lastGuess = guess
+        guess = chooseGuess(answers, knownWord, wordContains, wordDoesNotContain)
+        guesses.append([list(guess), ])
 
         print("Guessing word '{}', possible answers left: {}".format(guess, len(answers)))
         enterWord(driver, guess)
-
-        knownWord, wordContains, wordDoesNotContain = getRowEvaluation(driver, gameRows[turn], knownWord, wordContains, wordDoesNotContain)
 
     if '_' not in knownWord:
         print('We won. The word was {}'.format(knownWord))
@@ -169,7 +202,7 @@ def testGame(firstGuess, answer, answersCopy):
     answers = answersCopy.copy()
 
     guess = firstGuess
-    lastGuess = guess
+    guesses = [[list(guess), ]]
 
     # Used to store the letters we know are in the correct spot
     knownWord = list('_____')
@@ -179,21 +212,22 @@ def testGame(firstGuess, answer, answersCopy):
 
     for turn in range(0, 5):
 
-        knownWord, wordContains, wordDoesNotContain = getTestEvaluation(answer, guess, knownWord, wordContains, wordDoesNotContain)
+        eval, knownWord, wordContains, wordDoesNotContain = getTestEvaluation(answer, guess, knownWord, wordContains, wordDoesNotContain)
+        guesses[turn].insert(1, eval)
 
         if '_' not in knownWord:
             print('We won. The word was {}'.format(knownWord))
             return turn
 
         # Go through the known answers list and remove any wrong ones
-        answers = trimAnswers(answers, knownWord, lastGuess, wordContains, wordDoesNotContain)
+        answers = trimAnswers(answers, knownWord, guesses, wordContains, wordDoesNotContain)
 
-        guess = chooseGuess(answers, knownWord, lastGuess, wordContains, wordDoesNotContain)
-        lastGuess = guess
+        guess = chooseGuess(answers, knownWord, wordContains, wordDoesNotContain)
+        guesses.append([list(guess), ])
 
         print("Guessing word '{}', possible answers left: {}".format(guess, len(answers)))
 
-    knownWord, wordContains, wordDoesNotContain = getTestEvaluation(answer, guess, knownWord, wordContains, wordDoesNotContain)
+    eval, knownWord, wordContains, wordDoesNotContain = getTestEvaluation(answer, guess, knownWord, wordContains, wordDoesNotContain)
 
     if '_' not in knownWord:
         print('We won. The word was {}'.format(knownWord))
@@ -205,7 +239,7 @@ def testGame(firstGuess, answer, answersCopy):
 
 if __name__ == '__main__':
 
-    testing = False
+    testing = True
 
     if testing:
 
@@ -214,6 +248,8 @@ if __name__ == '__main__':
             for line in f:
                 answers.append(line.strip())
 
+        #testGame('farts', 'boxer', answers)
+        #exit()
         fails = open('fails.txt', 'w')
 
         # Why, python?
